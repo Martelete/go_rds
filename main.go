@@ -36,7 +36,7 @@ var instanceClassToMemoryBytes = map[string]uint64{
 }
 
 func main() {
-	region := "eu-west-1" // Change to your region
+	region := "" // Choose any AWS region
 	ctx := context.TODO()
 
 	// Load AWS config
