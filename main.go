@@ -67,7 +67,7 @@ func main() {
 	cpuStart := now.Add(-1 * time.Hour)
 
 	fmt.Println("RDS Monitoring Report")
-	fmt.Println("==========================================================================")
+	fmt.Println("====================================================================================")
 	fmt.Printf("%-40s %-15s %-15s %-15s %-15s\n", "Instance ID", "Free Storage", "Memory Used", "CPU Used", "Instance Class")
 
 	for _, db := range rdsOutput.DBInstances {
