@@ -8,14 +8,6 @@ The goal is to provide faster and more accessible visibility into the CPU and me
 go run main.go
 ```
 
-- Notes:
-Remember to update the AWS region 
-```golang
-func main() {
-	region := "" // Choose any AWS region
-	ctx := context.TODO()
-```
-
 ## Examples
 ```bash
 RDS Monitoring Report
