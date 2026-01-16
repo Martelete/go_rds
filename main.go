@@ -36,7 +36,10 @@ var instanceClassToMemoryBytes = map[string]uint64{
 }
 
 func main() {
-	region := "" // Choose any AWS region
+	var region string
+
+	fmt.Print("Enter AWS region: ")
+
 	ctx := context.TODO()
 
 	// Load AWS config
@@ -130,7 +133,7 @@ func getStoragePercent(cwClient *cloudwatch.Client, ctx context.Context, instanc
 		StartTime:  &start,
 		EndTime:    &end,
 		Period:     aws.Int32(3600),
-		Statistics: []types.Statistic{types.StatisticMaximum},
+		Statistics: []types.Statistic{types.StatisticMinimum},
 	})
 	if err != nil {
 		return 0, err
