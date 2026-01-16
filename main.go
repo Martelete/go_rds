@@ -59,7 +59,7 @@ func main() {
 	}
 
 	if len(rdsOutput.DBInstances) == 0 {
-		log.Println("No DB instances found in the region")
+		log.Println("No DB instances found in this region")
 		return
 	}
 
