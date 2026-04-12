@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -39,6 +40,10 @@ func main() {
 	var region string
 
 	fmt.Print("Enter AWS region: ")
+	_, err := fmt.Scanln(&region)
+	if err != nil || region == "" {
+		log.Fatal("Valid region required")
+	}
 
 	ctx := context.TODO()
 
@@ -143,14 +148,18 @@ func getStoragePercent(cwClient *cloudwatch.Client, ctx context.Context, instanc
 		return 0, fmt.Errorf("no storage datapoints found")
 	}
 
-	maxFree := 0.0
+	minFree := math.MaxFloat64
 	for _, dp := range output.Datapoints {
-		if dp.Maximum != nil && *dp.Maximum > maxFree {
-			maxFree = *dp.Maximum
+		if dp.Minimum != nil && *dp.Minimum < minFree {
+			minFree = *dp.Minimum
 		}
 	}
 
-	return (maxFree / float64(allocatedBytes)) * 100, nil
+	if minFree == math.MaxFloat64 {
+		return 0, fmt.Errorf("no valid minimum free storage data")
+	}
+
+	return (minFree / float64(allocatedBytes)) * 100, nil
 }
 
 func getMemoryPercent(cwClient *cloudwatch.Client, ctx context.Context, instanceID string, start, end time.Time, totalMem uint64) (float64, error) {
