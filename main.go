@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 )
 
 // Map of RDS instance class to total memory in bytes
@@ -38,14 +40,20 @@ var instanceClassToMemoryBytes = map[string]uint64{
 
 func main() {
 	var region string
+	timeout := flag.Duration("timeout", 30*time.Second, "overall timeout for AWS API calls")
+	flag.StringVar(&region, "region", "", "AWS region")
+	flag.Parse()
 
-	fmt.Print("Enter AWS region: ")
-	_, err := fmt.Scanln(&region)
-	if err != nil || region == "" {
-		log.Fatal("Valid region required")
+	if region == "" {
+		fmt.Print("Enter AWS region: ")
+		_, err := fmt.Scanln(&region)
+		if err != nil || region == "" {
+			log.Fatal("valid region required")
+		}
 	}
 
-	ctx := context.TODO()
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
 
 	// Load AWS config
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
@@ -57,13 +65,18 @@ func main() {
 	rdsClient := rds.NewFromConfig(cfg)
 	cwClient := cloudwatch.NewFromConfig(cfg)
 
-	// Get all DB instances
-	rdsOutput, err := rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{})
-	if err != nil {
-		log.Fatalf("Failed to describe DB instances: %v", err)
+	// Get all DB instances across all pages.
+	var dbInstances []rdstypes.DBInstance
+	paginator := rds.NewDescribeDBInstancesPaginator(rdsClient, &rds.DescribeDBInstancesInput{})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			log.Fatalf("Failed to describe DB instances: %v", err)
+		}
+		dbInstances = append(dbInstances, page.DBInstances...)
 	}
 
-	if len(rdsOutput.DBInstances) == 0 {
+	if len(dbInstances) == 0 {
 		log.Println("No DB instances found in this region")
 		return
 	}
@@ -76,9 +89,10 @@ func main() {
 
 	fmt.Println("RDS Monitoring Report")
 	fmt.Println("====================================================================================")
-	fmt.Printf("%-40s %-15s %-15s %-15s %-15s\n", "Instance ID", "Free Storage", "Memory Used", "CPU Used", "Instance Class")
+	fmt.Println("Min free storage is the lowest value in the last 24h. Estimated memory used is derived from FreeableMemory.")
+	fmt.Printf("%-40s %-18s %-18s %-15s %-15s\n", "Instance ID", "Min Free Stg 24h", "Est. Mem Used", "CPU Avg 5m", "Instance Class")
 
-	for _, db := range rdsOutput.DBInstances {
+	for _, db := range dbInstances {
 		if db.DBInstanceIdentifier == nil || *db.DBInstanceIdentifier == "" {
 			continue
 		}
@@ -96,7 +110,7 @@ func main() {
 
 		// 1. Storage calculation
 		allocatedBytes := int64(*db.AllocatedStorage) * 1024 * 1024 * 1024
-		storagePercent, err := getStoragePercent(cwClient, ctx, instanceID, storageStart, now, allocatedBytes)
+		storagePercent, err := getMinFreeStoragePercent(cwClient, ctx, instanceID, storageStart, now, allocatedBytes)
 		if err != nil {
 			log.Printf("Storage error for %s: %v", instanceID, err)
 			continue
@@ -122,12 +136,16 @@ func main() {
 		}
 
 		// Print results
-		fmt.Printf("%-40s %-15.2f%% %-15.2f%% %-15.2f%% %-15s\n",
+		fmt.Printf("%-40s %-18.2f%% %-18.2f%% %-15.2f%% %-15s\n",
 			instanceID, storagePercent, memPercent, cpuPercent, instanceClass)
 	}
 }
 
-func getStoragePercent(cwClient *cloudwatch.Client, ctx context.Context, instanceID string, start, end time.Time, allocatedBytes int64) (float64, error) {
+func getMinFreeStoragePercent(cwClient *cloudwatch.Client, ctx context.Context, instanceID string, start, end time.Time, allocatedBytes int64) (float64, error) {
+	if allocatedBytes <= 0 {
+		return 0, fmt.Errorf("allocated storage must be greater than zero")
+	}
+
 	output, err := cwClient.GetMetricStatistics(ctx, &cloudwatch.GetMetricStatisticsInput{
 		Namespace:  aws.String("AWS/RDS"),
 		MetricName: aws.String("FreeStorageSpace"),
@@ -163,6 +181,10 @@ func getStoragePercent(cwClient *cloudwatch.Client, ctx context.Context, instanc
 }
 
 func getMemoryPercent(cwClient *cloudwatch.Client, ctx context.Context, instanceID string, start, end time.Time, totalMem uint64) (float64, error) {
+	if totalMem == 0 {
+		return 0, fmt.Errorf("total memory must be greater than zero")
+	}
+
 	output, err := cwClient.GetMetricStatistics(ctx, &cloudwatch.GetMetricStatisticsInput{
 		Namespace:  aws.String("AWS/RDS"),
 		MetricName: aws.String("FreeableMemory"),
@@ -183,17 +205,18 @@ func getMemoryPercent(cwClient *cloudwatch.Client, ctx context.Context, instance
 		return 0, fmt.Errorf("no memory datapoints found")
 	}
 
-	// Get latest datapoint
-	latest := time.Time{}
-	freeMem := 0.0
-	for _, dp := range output.Datapoints {
-		if dp.Timestamp.After(latest) && dp.Average != nil {
-			latest = *dp.Timestamp
-			freeMem = *dp.Average
-		}
+	freeMem, err := latestAverage(output.Datapoints)
+	if err != nil {
+		return 0, err
 	}
 
 	usedPercent := 100 - (freeMem/float64(totalMem))*100
+	if usedPercent < 0 {
+		usedPercent = 0
+	}
+	if usedPercent > 100 {
+		usedPercent = 100
+	}
 	return usedPercent, nil
 }
 
@@ -218,14 +241,33 @@ func getCPUPercent(cwClient *cloudwatch.Client, ctx context.Context, instanceID 
 		return 0, fmt.Errorf("no CPU datapoints found")
 	}
 
-	// Get latest datapoint
+	cpu, err := latestAverage(output.Datapoints)
+	if err != nil {
+		return 0, err
+	}
+
+	return cpu, nil
+}
+
+func latestAverage(datapoints []types.Datapoint) (float64, error) {
 	latest := time.Time{}
-	cpu := 0.0
-	for _, dp := range output.Datapoints {
-		if dp.Timestamp.After(latest) && dp.Average != nil {
+	value := 0.0
+	found := false
+
+	for _, dp := range datapoints {
+		if dp.Timestamp == nil || dp.Average == nil {
+			continue
+		}
+		if !found || dp.Timestamp.After(latest) {
 			latest = *dp.Timestamp
-			cpu = *dp.Average
+			value = *dp.Average
+			found = true
 		}
 	}
-	return cpu, nil
+
+	if !found {
+		return 0, fmt.Errorf("no valid datapoints found")
+	}
+
+	return value, nil
 }
