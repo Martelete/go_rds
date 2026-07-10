@@ -91,7 +91,7 @@ func main() {
 	fmt.Println("=======================================================================================================")
 	fmt.Println("Free storage is the lowest value in the last 24h. Estimated memory used is derived from FreeableMemory.")
 	fmt.Println("=======================================================================================================")
-	fmt.Printf("%-40s %-18s %-16s %-15s %-16s\n", "Instance ID", "Free Storage", "Est. Mem Used", "CPU Avg 5m", "Instance Class")
+	fmt.Printf("%-40s %-18s %-16s %-18s %-18s\n", "Instance ID", "Free Storage", "Est. Mem Used", "CPU Avg 5m", "Instance Class")
 
 	for _, db := range dbInstances {
 		if db.DBInstanceIdentifier == nil || *db.DBInstanceIdentifier == "" {
