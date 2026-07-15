@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -36,6 +37,14 @@ var instanceClassToMemoryBytes = map[string]uint64{
 	"db.r6g.xlarge":  34359738368, // 32 GiB
 	"db.r6g.2xlarge": 68719476736, // 64 GiB
 	// Add more instance classes as needed
+}
+
+type reportRow struct {
+	InstanceID    string
+	FreeStorage   float64
+	EstMemUsed    float64
+	CPUAvg        float64
+	InstanceClass string
 }
 
 func main() {
@@ -87,11 +96,7 @@ func main() {
 	memoryStart := now.Add(-1 * time.Hour)
 	cpuStart := now.Add(-1 * time.Hour)
 
-	fmt.Println("RDS Monitoring Report")
-	fmt.Println("=======================================================================================================")
-	fmt.Println("Free storage is the lowest value in the last 24h. Estimated memory used is derived from FreeableMemory.")
-	fmt.Println("=======================================================================================================")
-	fmt.Printf("%-40s %-18s %-16s %-18s %-18s\n", "Instance ID", "Free Storage", "Est. Mem Used", "CPU Avg 5m", "Instance Class")
+	var rows []reportRow
 
 	for _, db := range dbInstances {
 		if db.DBInstanceIdentifier == nil || *db.DBInstanceIdentifier == "" {
@@ -136,10 +141,41 @@ func main() {
 			continue
 		}
 
-		// Print results
-		fmt.Printf("%-40s %-18.2f%% %-18.2f%% %-15.2f%% %-15s\n",
-			instanceID, storagePercent, memPercent, cpuPercent, instanceClass)
+		rows = append(rows, reportRow{
+			InstanceID:    instanceID,
+			FreeStorage:   storagePercent,
+			EstMemUsed:    memPercent,
+			CPUAvg:        cpuPercent,
+			InstanceClass: instanceClass,
+		})
 	}
+
+	fmt.Print(renderReport(rows))
+}
+
+func renderReport(rows []reportRow) string {
+	var builder strings.Builder
+
+	builder.WriteString("RDS Monitoring Report\n")
+	builder.WriteString("=======================================================================================================\n")
+	builder.WriteString("Free storage is the lowest value in the last 24h. Estimated memory used is derived from FreeableMemory.\n")
+	builder.WriteString("=======================================================================================================\n")
+	builder.WriteString(fmt.Sprintf("%-40s %-16s %-18s %-18s %-18s\n", "Instance ID", "Free Storage", "Est. Mem Used", "CPU Avg 5m", "Instance Class"))
+
+	for _, row := range rows {
+		builder.WriteString(fmt.Sprintf("%-40s %-18s %-18s %-15s %-15s\n",
+			row.InstanceID,
+			formatPercent(row.FreeStorage),
+			formatPercent(row.EstMemUsed),
+			formatPercent(row.CPUAvg),
+			row.InstanceClass))
+	}
+
+	return builder.String()
+}
+
+func formatPercent(value float64) string {
+	return fmt.Sprintf("%.2f%%", value)
 }
 
 func getMinFreeStoragePercent(cwClient *cloudwatch.Client, ctx context.Context, instanceID string, start, end time.Time, allocatedBytes int64) (float64, error) {
