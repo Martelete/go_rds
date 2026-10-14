@@ -48,6 +48,7 @@ type reportRow struct {
 }
 
 func main() {
+	// Region selection and timeout configuration
 	var region string
 	timeout := flag.Duration("timeout", 30*time.Second, "overall timeout for AWS API calls")
 	flag.StringVar(&region, "region", "", "AWS region")
