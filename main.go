@@ -154,6 +154,9 @@ func main() {
 	fmt.Print(renderReport(rows))
 }
 
+// Shared by the header and the data rows so the columns always line up.
+const reportRowFormat = "%-40s %-18s %-18s %-18s %s\n"
+
 func renderReport(rows []reportRow) string {
 	var builder strings.Builder
 
@@ -161,15 +164,15 @@ func renderReport(rows []reportRow) string {
 	builder.WriteString("=======================================================================================================\n")
 	builder.WriteString("Free storage is the lowest value in the last 24h. Estimated memory used is derived from FreeableMemory.\n")
 	builder.WriteString("=======================================================================================================\n")
-	builder.WriteString(fmt.Sprintf("%-40s %-16s %-18s %-18s %-18s\n", "Instance ID", "Free Storage", "Est. Mem Used", "CPU Avg 5m", "Instance Class"))
+	builder.WriteString(fmt.Sprintf(reportRowFormat, "Instance ID", "Free Storage", "Est. Mem Used", "CPU Avg 5m", "Instance Class"))
 
 	for _, row := range rows {
-		builder.WriteString(fmt.Sprintf("%-40s %-18s %-18s %-15s %-15s\n",
+		fmt.Fprintf(&builder, reportRowFormat,
 			row.InstanceID,
 			formatPercent(row.FreeStorage),
 			formatPercent(row.EstMemUsed),
 			formatPercent(row.CPUAvg),
-			row.InstanceClass))
+			row.InstanceClass)
 	}
 
 	return builder.String()
